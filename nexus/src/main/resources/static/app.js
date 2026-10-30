@@ -1,11 +1,55 @@
 (function () {
   'use strict';
 
+  const AVATAR_COLORS = [
+    '#007AFF',
+    '#AF52DE',
+    '#34C759',
+    '#FF9500',
+    '#FF2D55',
+    '#5856D6',
+    '#00C7BE'
+  ];
+
+  const DEFAULT_NAMES = [
+    'Pilot', 'Rover', 'Nova', 'Atlas', 'Echo',
+    'Orion', 'Pulse', 'Zephyr', 'Aero', 'Phoenix'
+  ];
+
+  let currentUserId = localStorage.getItem('nexus_user_id');
+  let currentUserName = localStorage.getItem('nexus_user_name');
+  let currentUserColor = localStorage.getItem('nexus_user_color');
+
+  if (!currentUserId) {
+    currentUserId = 'user-' + Math.random().toString(16).substring(2, 8);
+    localStorage.setItem('nexus_user_id', currentUserId);
+  }
+  if (!currentUserName) {
+    currentUserName = DEFAULT_NAMES[Math.floor(Math.random() * DEFAULT_NAMES.length)];
+    localStorage.setItem('nexus_user_name', currentUserName);
+  }
+  if (!currentUserColor) {
+    currentUserColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+    localStorage.setItem('nexus_user_color', currentUserColor);
+  }
+
+  let modalSelectedColor = currentUserColor;
+
   const statusDot = document.getElementById('status-dot');
   const statusLabel = document.getElementById('status-label');
   const peerName = document.getElementById('peer-name');
-  const modeBadge = document.getElementById('mode-badge');
-  const activePeerAvatar = document.getElementById('active-peer-avatar');
+  const peerCountBadge = document.getElementById('peer-count-badge');
+  const peerRosterStack = document.getElementById('peer-roster-stack');
+  const btnProfile = document.getElementById('btn-profile');
+  const headerUserAvatar = document.getElementById('header-user-avatar');
+  const profileModal = document.getElementById('profile-modal');
+  const modalCloseBtn = document.getElementById('modal-close-btn');
+  const modalAvatarPreview = document.getElementById('modal-avatar-preview');
+  const modalNamePreview = document.getElementById('modal-name-preview');
+  const profileNameInput = document.getElementById('profile-name-input');
+  const colorPalette = document.getElementById('color-palette');
+  const btnSaveProfile = document.getElementById('btn-save-profile');
+
   const detailsToggleBtn = document.getElementById('details-toggle-btn');
   const protocolBanner = document.getElementById('protocol-banner');
   const bannerGateway = document.getElementById('banner-gateway');
@@ -37,6 +81,7 @@
   let lastLatency = null;
 
   const COMMANDS = [
+    { cmd: '/name ', name: '/name <handle>', desc: 'Change your public display handle across the network' },
     { cmd: '/drop ', name: '/drop <text>', desc: 'Simulate 1 dropped packet (demonstrates ACK timeout & retransmit)' },
     { cmd: '/fail ', name: '/fail <text>', desc: 'Simulate offline peer (demonstrates retry exhaustion to FAILED)' },
     { cmd: '/image ', name: '/image [ttlSeconds]', desc: 'Transfer chunked photo over UDP with ephemeral timer' },
@@ -47,16 +92,63 @@
     { cmd: '/help', name: '/help', desc: 'Show all available protocol showcase commands' }
   ];
 
+  function getInitials(name) {
+    if (!name || !name.trim()) return '?';
+    const trimmed = name.trim();
+    const words = trimmed.split(/\s+/);
+    if (words.length >= 2) {
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+    return trimmed.substring(0, Math.min(2, trimmed.length)).toUpperCase();
+  }
+
   function init() {
+    updateHeaderProfileAvatar();
     setupEventListeners();
     connectWebSocket();
     loadStatusFallback();
   }
 
+  function updateHeaderProfileAvatar() {
+    const initials = getInitials(currentUserName);
+    if (headerUserAvatar) {
+      headerUserAvatar.textContent = initials;
+      headerUserAvatar.style.backgroundColor = currentUserColor;
+    }
+    const rosterSelf = document.getElementById('roster-avatar-self');
+    if (rosterSelf) {
+      rosterSelf.textContent = initials;
+      rosterSelf.style.backgroundColor = currentUserColor;
+      rosterSelf.title = currentUserName + ' (You)';
+    }
+  }
+
   function setupEventListeners() {
-    detailsToggleBtn.addEventListener('click', function () {
-      protocolBanner.classList.toggle('hidden');
-    });
+    if (detailsToggleBtn) {
+      detailsToggleBtn.addEventListener('click', function () {
+        protocolBanner.classList.toggle('hidden');
+      });
+    }
+
+    if (btnProfile) {
+      btnProfile.addEventListener('click', openProfileModal);
+    }
+    if (modalCloseBtn) {
+      modalCloseBtn.addEventListener('click', closeProfileModal);
+    }
+    if (profileModal) {
+      profileModal.addEventListener('click', function (e) {
+        if (e.target === profileModal) {
+          closeProfileModal();
+        }
+      });
+    }
+    if (profileNameInput) {
+      profileNameInput.addEventListener('input', updateModalPreview);
+    }
+    if (btnSaveProfile) {
+      btnSaveProfile.addEventListener('click', saveProfile);
+    }
 
     if (btnDemoLoss) {
       btnDemoLoss.addEventListener('click', function () {
@@ -138,6 +230,113 @@
     });
   }
 
+  function openProfileModal() {
+    modalSelectedColor = currentUserColor;
+    if (profileNameInput) {
+      profileNameInput.value = currentUserName;
+    }
+    updateModalPreview();
+    renderColorSwatches();
+    if (profileModal) {
+      profileModal.classList.remove('hidden');
+      if (profileNameInput) {
+        profileNameInput.focus();
+      }
+    }
+  }
+
+  function closeProfileModal() {
+    if (profileModal) {
+      profileModal.classList.add('hidden');
+    }
+  }
+
+  function updateModalPreview() {
+    const name = (profileNameInput && profileNameInput.value.trim()) || 'Anonymous';
+    if (modalAvatarPreview) {
+      modalAvatarPreview.textContent = getInitials(name);
+      modalAvatarPreview.style.backgroundColor = modalSelectedColor;
+    }
+    if (modalNamePreview) {
+      modalNamePreview.textContent = name;
+    }
+  }
+
+  function renderColorSwatches() {
+    if (!colorPalette) return;
+    colorPalette.innerHTML = '';
+    AVATAR_COLORS.forEach(function (color) {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'color-swatch' + (color === modalSelectedColor ? ' active' : '');
+      swatch.style.backgroundColor = color;
+      swatch.setAttribute('aria-label', 'Color ' + color);
+      swatch.addEventListener('click', function () {
+        modalSelectedColor = color;
+        renderColorSwatches();
+        updateModalPreview();
+      });
+      colorPalette.appendChild(swatch);
+    });
+  }
+
+  function saveProfile() {
+    const newName = profileNameInput ? profileNameInput.value.trim() : '';
+    if (newName) {
+      currentUserName = newName;
+      localStorage.setItem('nexus_user_name', currentUserName);
+    }
+    currentUserColor = modalSelectedColor;
+    localStorage.setItem('nexus_user_color', currentUserColor);
+
+    updateHeaderProfileAvatar();
+    sendProfileUpdate();
+    closeProfileModal();
+  }
+
+  function sendProfileUpdate() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        action: 'SET_PROFILE',
+        senderId: currentUserId,
+        name: currentUserName,
+        color: currentUserColor
+      }));
+    }
+  }
+
+  function updatePeerRoster(peers) {
+    if (!peerRosterStack) return;
+    peerRosterStack.innerHTML = '';
+
+    const selfDiv = document.createElement('div');
+    selfDiv.className = 'roster-avatar';
+    selfDiv.id = 'roster-avatar-self';
+    selfDiv.style.backgroundColor = currentUserColor;
+    selfDiv.textContent = getInitials(currentUserName);
+    selfDiv.title = currentUserName + ' (You)';
+    peerRosterStack.appendChild(selfDiv);
+
+    let count = 1;
+    if (Array.isArray(peers)) {
+      peers.forEach(function (p) {
+        if (p.id && p.id !== currentUserId) {
+          count++;
+          const pDiv = document.createElement('div');
+          pDiv.className = 'roster-avatar';
+          pDiv.style.backgroundColor = p.color || '#8E8E93';
+          pDiv.textContent = getInitials(p.name);
+          pDiv.title = (p.name || 'Peer') + ' (Connected)';
+          peerRosterStack.appendChild(pDiv);
+        }
+      });
+    }
+
+    if (peerCountBadge) {
+      peerCountBadge.textContent = count === 1 ? '1 online' : count + ' online';
+    }
+  }
+
   function handleCommandAutocomplete() {
     const val = messageInput.value;
     if (val.startsWith('/')) {
@@ -148,10 +347,12 @@
 
       if (matched.length > 0) {
         renderCommandPalette(matched);
-        return;
+      } else {
+        hideCommandPalette();
       }
+    } else {
+      hideCommandPalette();
     }
-    hideCommandPalette();
   }
 
   function renderCommandPalette(commands) {
@@ -160,22 +361,10 @@
       const item = document.createElement('div');
       item.className = 'command-item' + (idx === 0 ? ' selected' : '');
       item.dataset.cmd = c.cmd;
-
-      const name = document.createElement('span');
-      name.className = 'command-name';
-      name.textContent = c.name;
-
-      const desc = document.createElement('span');
-      desc.className = 'command-desc';
-      desc.textContent = c.desc;
-
-      item.appendChild(name);
-      item.appendChild(desc);
-
+      item.innerHTML = '<span class="command-name">' + c.name + '</span><span class="command-desc">' + c.desc + '</span>';
       item.addEventListener('click', function () {
         selectCommand(c.cmd);
       });
-
       commandPaletteList.appendChild(item);
     });
     commandPalette.classList.remove('hidden');
@@ -193,28 +382,26 @@
     updateSendButtonState();
   }
 
-  function submitCommandDirect(cmd) {
-    messageInput.value = cmd;
-    autoResizeTextarea();
-    updateSendButtonState();
-    composerForm.dispatchEvent(new Event('submit'));
+  function submitCommandDirect(cmdText) {
+    messageInput.value = cmdText;
+    sendMessage();
   }
 
   function autoResizeTextarea() {
     messageInput.style.height = 'auto';
-    const newHeight = Math.min(messageInput.scrollHeight, 100);
-    messageInput.style.height = newHeight + 'px';
+    messageInput.style.height = Math.min(messageInput.scrollHeight, 100) + 'px';
   }
 
   function updateSendButtonState() {
-    const text = messageInput.value.trim();
+    const hasText = messageInput.value.trim().length > 0;
     const isConnected = ws && ws.readyState === WebSocket.OPEN;
-    sendBtn.disabled = !isConnected || text.length === 0;
+    sendBtn.disabled = !hasText || !isConnected;
   }
 
   function connectWebSocket() {
-    clearTimeout(reconnectTimer);
-    updateConnectionStatus('connecting', 'Connecting to Gateway...');
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = protocol + '//' + window.location.host + '/ws';
@@ -230,6 +417,7 @@
       reconnectDelay = 1000;
       updateConnectionStatus('connected', 'Gateway Connected • NEXUS UDP Ready');
       updateSendButtonState();
+      sendProfileUpdate();
     };
 
     ws.onmessage = function (event) {
@@ -290,6 +478,12 @@
         }
         break;
 
+      case 'ROSTER_UPDATED':
+        if (Array.isArray(data.peers)) {
+          updatePeerRoster(data.peers);
+        }
+        break;
+
       case 'TELEMETRY':
         if (data.telemetry) {
           handleTelemetry(data.telemetry);
@@ -311,10 +505,12 @@
   }
 
   function updateSystemInfo(info) {
-    if (info.localUdpPort) {
+    if (info.localUdpPort && bannerUdpPort) {
       bannerUdpPort.textContent = info.localUdpPort;
     }
-    bannerGateway.textContent = 'HTTP & WS (Port ' + window.location.port + ')';
+    if (bannerGateway) {
+      bannerGateway.textContent = 'HTTP & WS (Port ' + window.location.port + ')';
+    }
   }
 
   function handleTelemetry(t) {
@@ -327,7 +523,11 @@
       lastLatency = t.latencyMs;
     }
 
-    telemetrySummary.textContent = 'Sent: ' + telemetrySent + ' | Recv: ' + telemetryRecv + ' | RTT: ' + (lastLatency !== null ? lastLatency + 'ms' : '--');
+    if (telemetrySummary) {
+      telemetrySummary.textContent = 'Sent: ' + telemetrySent + ' | Recv: ' + telemetryRecv + ' | RTT: ' + (lastLatency !== null ? lastLatency + 'ms' : '--');
+    }
+
+    if (!telemetryTbody) return;
 
     const emptyRow = telemetryTbody.querySelector('.telemetry-empty');
     if (emptyRow) {
@@ -357,7 +557,7 @@
     fetch('/api/status')
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        if (data.port) {
+        if (data.port && bannerGateway) {
           bannerGateway.textContent = 'HTTP & WS (Port ' + data.port + ')';
         }
       })
@@ -370,8 +570,25 @@
       return;
     }
 
+    if (text.startsWith('/name ')) {
+      const newName = text.substring(6).trim();
+      if (newName) {
+        currentUserName = newName;
+        localStorage.setItem('nexus_user_name', currentUserName);
+        updateHeaderProfileAvatar();
+        sendProfileUpdate();
+      }
+      messageInput.value = '';
+      autoResizeTextarea();
+      updateSendButtonState();
+      return;
+    }
+
     const payload = JSON.stringify({
       action: 'SEND_MESSAGE',
+      senderId: currentUserId,
+      senderName: currentUserName,
+      senderColor: currentUserColor,
       content: text
     });
 
@@ -398,38 +615,27 @@
     const group = document.createElement('div');
     group.id = 'msg-' + msg.id;
 
+    const isSelf = (msg.senderId && msg.senderId === currentUserId) || (msg.sender === 'user' && (!msg.senderId || msg.senderId === 'local-user'));
+
     if (msg.messageType === 'SYSTEM') {
       group.className = 'message-group system-group';
-    } else {
-      group.className = 'message-group ' + (msg.sender === 'user' ? 'outgoing' : 'incoming');
-    }
-
-    if (msg.sender !== 'user' && msg.messageType !== 'SYSTEM') {
-      const peerHeader = document.createElement('div');
-      peerHeader.className = 'message-peer-header';
-
-      const peerBadge = document.createElement('span');
-      peerBadge.className = 'message-peer-badge';
-      peerBadge.textContent = msg.peerName || 'Peer';
-      if (msg.peerColor) {
-        peerBadge.style.color = msg.peerColor;
-      }
-      peerHeader.appendChild(peerBadge);
-      group.appendChild(peerHeader);
-    }
-
-    const bubble = document.createElement('div');
-
-    if (msg.messageType === 'IMAGE' && msg.mediaData) {
-      bubble.className = 'message-bubble message-bubble-image';
-      renderImageCard(bubble, msg);
-    } else {
+      const bubble = document.createElement('div');
       bubble.className = 'message-bubble';
       bubble.textContent = msg.content;
-    }
-    group.appendChild(bubble);
+      group.appendChild(bubble);
+    } else if (isSelf) {
+      group.className = 'message-group outgoing';
 
-    if (msg.messageType !== 'SYSTEM') {
+      const bubble = document.createElement('div');
+      if (msg.messageType === 'IMAGE' && msg.mediaData) {
+        bubble.className = 'message-bubble message-bubble-image';
+        renderImageCard(bubble, msg);
+      } else {
+        bubble.className = 'message-bubble';
+        bubble.textContent = msg.content;
+      }
+      group.appendChild(bubble);
+
       const meta = document.createElement('div');
       meta.className = 'message-meta';
 
@@ -438,15 +644,59 @@
       timeSpan.textContent = formatTimestamp(msg.timestamp);
       meta.appendChild(timeSpan);
 
-      if (msg.sender === 'user') {
-        const statusSpan = document.createElement('span');
-        statusSpan.className = 'message-status';
-        statusSpan.id = 'status-' + msg.id;
-        statusSpan.textContent = formatStatusLabel(msg.status, msg.retryCount);
-        meta.appendChild(statusSpan);
-      }
+      const statusSpan = document.createElement('span');
+      statusSpan.className = 'message-status';
+      statusSpan.id = 'status-' + msg.id;
+      statusSpan.textContent = formatStatusLabel(msg.status, msg.retryCount);
+      meta.appendChild(statusSpan);
 
       group.appendChild(meta);
+    } else {
+      group.className = 'message-group incoming';
+
+      const row = document.createElement('div');
+      row.className = 'message-incoming-row';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-sender-avatar';
+      avatar.style.backgroundColor = msg.peerColor || '#8E8E93';
+      avatar.textContent = getInitials(msg.peerName || 'Peer');
+      row.appendChild(avatar);
+
+      const body = document.createElement('div');
+      body.className = 'message-incoming-body';
+
+      const peerHeader = document.createElement('div');
+      peerHeader.className = 'message-peer-header';
+      const peerBadge = document.createElement('span');
+      peerBadge.className = 'message-peer-badge';
+      peerBadge.textContent = msg.peerName || 'Peer';
+      if (msg.peerColor) {
+        peerBadge.style.color = msg.peerColor;
+      }
+      peerHeader.appendChild(peerBadge);
+      body.appendChild(peerHeader);
+
+      const bubble = document.createElement('div');
+      if (msg.messageType === 'IMAGE' && msg.mediaData) {
+        bubble.className = 'message-bubble message-bubble-image';
+        renderImageCard(bubble, msg);
+      } else {
+        bubble.className = 'message-bubble';
+        bubble.textContent = msg.content;
+      }
+      body.appendChild(bubble);
+
+      const meta = document.createElement('div');
+      meta.className = 'message-meta';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'message-time';
+      timeSpan.textContent = formatTimestamp(msg.timestamp);
+      meta.appendChild(timeSpan);
+      body.appendChild(meta);
+
+      row.appendChild(body);
+      group.appendChild(row);
     }
 
     messagesList.appendChild(group);

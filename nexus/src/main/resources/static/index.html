@@ -10,11 +10,13 @@
   <div class="app-container">
     <header class="app-header">
       <div class="header-info">
-        <div class="peer-avatar" id="active-peer-avatar">N</div>
+        <div class="peer-roster-stack" id="peer-roster-stack">
+          <div class="roster-avatar" id="roster-avatar-self" style="background-color: #007AFF;">U</div>
+        </div>
         <div class="header-text">
           <div class="peer-title">
             <span class="peer-name" id="peer-name">NEXUS Network</span>
-            <span class="mode-badge" id="mode-badge">Mode A: Multi-Peer UDP</span>
+            <span class="roster-badge" id="peer-count-badge">1 peer</span>
           </div>
           <div class="connection-status" id="connection-status">
             <span class="status-dot status-connecting" id="status-dot"></span>
@@ -27,6 +29,9 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
           </svg>
+        </button>
+        <button class="profile-btn" id="btn-profile" aria-label="Edit Profile" title="Edit Your Avatar &amp; Name">
+          <div class="profile-avatar-circle" id="header-user-avatar" style="background-color: #007AFF;">U</div>
         </button>
       </div>
     </header>
@@ -133,6 +138,35 @@
         </button>
       </form>
     </footer>
+  </div>
+
+  <div class="modal-backdrop hidden" id="profile-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">Your NEXUS Identity</h2>
+        <button type="button" class="modal-close-btn" id="modal-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <p class="modal-desc">Customize how your avatar and handle appear to all peers across the offline network.</p>
+
+      <div class="profile-preview-wrapper">
+        <div class="profile-large-avatar" id="modal-avatar-preview" style="background-color: #007AFF;">U</div>
+        <div class="profile-preview-name" id="modal-name-preview">You</div>
+      </div>
+
+      <div class="form-group">
+        <label for="profile-name-input" class="form-label">Display Name</label>
+        <input type="text" id="profile-name-input" class="form-input" maxlength="24" placeholder="Enter display name" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Avatar Color</label>
+        <div class="color-palette" id="color-palette"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-primary" id="btn-save-profile">Save &amp; Update Peers</button>
+      </div>
+    </div>
   </div>
 
   <script src="/app.js"></script>

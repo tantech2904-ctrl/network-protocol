@@ -130,23 +130,48 @@ public class WebGateway {
         out.write(response.getBytes(StandardCharsets.UTF_8));
         out.flush();
 
+        final WebSocketSession[] sessionRef = new WebSocketSession[1];
         WebSocketSession session = new WebSocketSession(
                 socket,
-                msg -> handleWebSocketMessage(msg),
+                msg -> handleWebSocketMessage(sessionRef[0], msg),
                 closedSession -> messageService.unregisterSession(closedSession));
+        sessionRef[0] = session;
 
         messageService.registerSession(session);
         session.startReading();
     }
 
     void handleWebSocketMessage(String rawJson) {
+        handleWebSocketMessage(null, rawJson);
+    }
+
+    void handleWebSocketMessage(WebSocketSession session, String rawJson) {
         try {
+            String type = extractJsonField(rawJson, "type");
+            String action = extractJsonField(rawJson, "action");
+            if ("SET_PROFILE".equalsIgnoreCase(type) || "SET_PROFILE".equalsIgnoreCase(action)) {
+                String senderId = extractJsonField(rawJson, "senderId");
+                String name = extractJsonField(rawJson, "name");
+                String color = extractJsonField(rawJson, "color");
+                if (session != null && senderId != null) {
+                    messageService.updateClientProfile(session, senderId, name, color);
+                }
+                return;
+            }
+
             String content = extractJsonField(rawJson, "content");
             if (content == null || content.isEmpty()) {
                 content = extractJsonField(rawJson, "text");
             }
             if (content != null && !content.isEmpty()) {
-                messageService.submitMessage(content);
+                String senderId = extractJsonField(rawJson, "senderId");
+                String senderName = extractJsonField(rawJson, "senderName");
+                String senderColor = extractJsonField(rawJson, "senderColor");
+                if (senderId != null && !senderId.isEmpty()) {
+                    messageService.submitMessage(senderId, senderName, senderColor, content);
+                } else {
+                    messageService.submitMessage(content);
+                }
             }
         } catch (Exception ignored) {
         }

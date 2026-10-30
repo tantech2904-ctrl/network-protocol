@@ -7,6 +7,7 @@ import java.util.UUID;
 public class ApplicationMessage {
     private final String id;
     private final String sender;
+    private final String senderId;
     private final String content;
     private final long timestamp;
     private volatile DeliveryStatus status;
@@ -19,16 +20,23 @@ public class ApplicationMessage {
     private volatile int ttlSeconds;
 
     public ApplicationMessage(String sender, String content) {
-        this(UUID.randomUUID().toString(), sender, content, System.currentTimeMillis(),
-                DeliveryStatus.GATEWAY_ACCEPTED, 0, 0,
+        this(UUID.randomUUID().toString(), sender, "user".equals(sender) ? "local-user" : "peer-node", content,
+                System.currentTimeMillis(), DeliveryStatus.GATEWAY_ACCEPTED, 0, 0,
                 "user".equals(sender) ? "You" : "Peer",
                 "user".equals(sender) ? "#007AFF" : "#8E8E93",
                 "TEXT", null, 0);
     }
 
+    public ApplicationMessage(String senderId, String senderName, String senderColor, String content) {
+        this(UUID.randomUUID().toString(), "user", senderId, content,
+                System.currentTimeMillis(), DeliveryStatus.GATEWAY_ACCEPTED, 0, 0,
+                senderName, senderColor, "TEXT", null, 0);
+    }
+
     public ApplicationMessage(
             String id,
             String sender,
+            String senderId,
             String content,
             long timestamp,
             DeliveryStatus status,
@@ -41,6 +49,7 @@ public class ApplicationMessage {
             int ttlSeconds) {
         this.id = id;
         this.sender = sender;
+        this.senderId = senderId != null ? senderId : "unknown";
         this.content = content;
         this.timestamp = timestamp;
         this.status = status;
@@ -59,6 +68,10 @@ public class ApplicationMessage {
 
     public String getSender() {
         return sender;
+    }
+
+    public String getSenderId() {
+        return senderId;
     }
 
     public String getContent() {
@@ -141,6 +154,7 @@ public class ApplicationMessage {
         StringBuilder sb = new StringBuilder("{");
         sb.append("\"id\":\"").append(escapeJson(id)).append("\",");
         sb.append("\"sender\":\"").append(escapeJson(sender)).append("\",");
+        sb.append("\"senderId\":\"").append(escapeJson(senderId)).append("\",");
         sb.append("\"content\":\"").append(escapeJson(content)).append("\",");
         sb.append("\"timestamp\":").append(timestamp).append(",");
         sb.append("\"status\":\"").append(status.name()).append("\",");

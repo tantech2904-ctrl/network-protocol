@@ -26,6 +26,8 @@ public class MessageService {
     private final Set<WebSocketSession> sessions;
     private final Map<String, InetSocketAddress> knownPeers;
     private final Map<String, String> peerColors;
+    private final Map<String, ClientProfile> clientProfiles;
+    private final Map<WebSocketSession, String> sessionClientIds;
     private final int maxHistorySize;
     private Consumer<String> simulationSender;
 
@@ -41,6 +43,8 @@ public class MessageService {
         this.sessions = Collections.newSetFromMap(new ConcurrentHashMap<>());
         this.knownPeers = new ConcurrentHashMap<>();
         this.peerColors = new ConcurrentHashMap<>();
+        this.clientProfiles = new ConcurrentHashMap<>();
+        this.sessionClientIds = new ConcurrentHashMap<>();
 
         registerPeer("Alice", new InetSocketAddress("127.0.0.1", 5000), "#AF52DE");
         registerPeer("Bob", new InetSocketAddress("127.0.0.1", 5002), "#34C759");
@@ -62,7 +66,29 @@ public class MessageService {
         this.simulationSender = sender;
     }
 
+    public void updateClientProfile(WebSocketSession session, String senderId, String name, String color) {
+        if (senderId == null || senderId.trim().isEmpty()) {
+            return;
+        }
+        String cleanId = senderId.trim();
+        sessionClientIds.put(session, cleanId);
+
+        ClientProfile profile = clientProfiles.computeIfAbsent(cleanId, id -> new ClientProfile(id, name, color));
+        profile.setName(name);
+        profile.setColor(color);
+
+        broadcastRoster();
+    }
+
     public ApplicationMessage submitMessage(String rawContent) throws IOException {
+        return submitMessage("local-user", "You", "#007AFF", rawContent);
+    }
+
+    public ApplicationMessage submitMessage(
+            String senderId,
+            String senderName,
+            String senderColor,
+            String rawContent) throws IOException {
         if (rawContent == null) {
             throw new IllegalArgumentException("Message content cannot be null");
         }
@@ -87,7 +113,7 @@ public class MessageService {
         }
 
         if (trimmed.startsWith("/image")) {
-            return handleImageCommand(trimmed);
+            return handleImageCommand(senderId, senderName, senderColor, trimmed);
         }
 
         if (trimmed.startsWith("/sim ")) {
@@ -132,18 +158,26 @@ public class MessageService {
             throw new IllegalArgumentException("Message length exceeds maximum allowed 1000 characters");
         }
 
-        ApplicationMessage message = new ApplicationMessage("user", trimmed);
-        message.setPeerName("To: " + targetPeerName);
+        ApplicationMessage message = new ApplicationMessage(senderId, senderName, senderColor, trimmed);
+        message.setPeerName(senderName);
+        message.setPeerColor(senderColor);
         addMessage(message);
 
         broadcast("{\"type\":\"MESSAGE_ACCEPTED\",\"message\":" + message.toJson() + "}");
 
-        nexusEndpoint.sendMessageTo(targetPeer, trimmed, status -> onDeliveryStatusChanged(message.getId(), status));
+        String wirePayload = (senderId != null && !"local-user".equals(senderId))
+                ? "[" + senderName + "|" + senderColor + "|" + senderId + "]" + trimmed
+                : trimmed;
+        nexusEndpoint.sendMessageTo(targetPeer, wirePayload, status -> onDeliveryStatusChanged(message.getId(), status));
 
         return message;
     }
 
-    private ApplicationMessage handleImageCommand(String command) throws IOException {
+    private ApplicationMessage handleImageCommand(
+            String senderId,
+            String senderName,
+            String senderColor,
+            String command) throws IOException {
         short ttl = 15;
         String[] parts = command.split(" ");
         if (parts.length > 1) {
@@ -156,7 +190,7 @@ public class MessageService {
         byte[] sampleImage = SampleImageGenerator.createSampleNexusImage();
         InetSocketAddress target = nexusEndpoint.getPeerAddress();
 
-        ApplicationMessage message = new ApplicationMessage("user", "Sent photo (" + sampleImage.length + " bytes over UDP)");
+        ApplicationMessage message = new ApplicationMessage(senderId, senderName, senderColor, "Sent photo (" + sampleImage.length + " bytes over UDP)");
         message.setMessageType("IMAGE");
         message.setMediaData("data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(sampleImage));
         message.setTtlSeconds(ttl);
@@ -221,19 +255,47 @@ public class MessageService {
         return msg;
     }
 
-    public void onPeerMessageReceived(Session session, String text) {
+    public void onPeerMessageReceived(Session session, String rawText) {
         String pName = resolvePeerName(session);
         String pColor = resolvePeerColor(session);
+        String senderId = session != null ? "udp-" + session.getSessionId() : "udp-unknown";
+        String content = rawText;
+
+        if (rawText != null && rawText.startsWith("[")) {
+            int closeBracket = rawText.indexOf(']');
+            if (closeBracket != -1) {
+                String meta = rawText.substring(1, closeBracket);
+                String[] parts = meta.split("\\|", 3);
+                if (parts.length >= 2) {
+                    pName = parts[0];
+                    pColor = parts[1];
+                    if (parts.length >= 3) {
+                        senderId = parts[2];
+                    }
+                    content = rawText.substring(closeBracket + 1);
+                }
+            }
+        }
 
         if (session != null) {
             session.setPeerName(pName);
             session.setPeerColor(pColor);
         }
 
-        ApplicationMessage message = new ApplicationMessage("peer", text);
-        message.setStatus(DeliveryStatus.DELIVERED_TO_APP);
-        message.setPeerName(pName);
-        message.setPeerColor(pColor);
+        ApplicationMessage message = new ApplicationMessage(
+                java.util.UUID.randomUUID().toString(),
+                "peer",
+                senderId,
+                content,
+                System.currentTimeMillis(),
+                DeliveryStatus.DELIVERED_TO_APP,
+                0,
+                0,
+                pName,
+                pColor,
+                "TEXT",
+                null,
+                0);
 
         addMessage(message);
         broadcast("{\"type\":\"PEER_MESSAGE\",\"message\":" + message.toJson() + "}");
@@ -242,19 +304,27 @@ public class MessageService {
     public void onPeerFileReceived(Session session, FileTransferManager.CompletedFile file) {
         String pName = resolvePeerName(session);
         String pColor = resolvePeerColor(session);
+        String senderId = session != null ? "udp-" + session.getSessionId() : "udp-unknown";
 
         if (session != null) {
             session.setPeerName(pName);
             session.setPeerColor(pColor);
         }
 
-        ApplicationMessage message = new ApplicationMessage("peer", "Received photo (" + file.getTotalBytes() + " bytes over UDP)");
-        message.setStatus(DeliveryStatus.DELIVERED_TO_APP);
-        message.setPeerName(pName);
-        message.setPeerColor(pColor);
-        message.setMessageType("IMAGE");
-        message.setMediaData(file.getDataUri());
-        message.setTtlSeconds(file.getTtlSeconds());
+        ApplicationMessage message = new ApplicationMessage(
+                java.util.UUID.randomUUID().toString(),
+                "peer",
+                senderId,
+                "Received photo (" + file.getTotalBytes() + " bytes over UDP)",
+                System.currentTimeMillis(),
+                DeliveryStatus.DELIVERED_TO_APP,
+                0,
+                0,
+                pName,
+                pColor,
+                "IMAGE",
+                file.getDataUri(),
+                file.getTtlSeconds());
 
         addMessage(message);
         broadcast("{\"type\":\"PEER_MESSAGE\",\"message\":" + message.toJson() + "}");
@@ -324,10 +394,16 @@ public class MessageService {
         sessions.add(session);
         sendHistoryTo(session);
         sendStatusTo(session);
+        sendRosterTo(session);
     }
 
     public void unregisterSession(WebSocketSession session) {
         sessions.remove(session);
+        String cid = sessionClientIds.remove(session);
+        if (cid != null && !sessionClientIds.containsValue(cid)) {
+            clientProfiles.remove(cid);
+            broadcastRoster();
+        }
     }
 
     public void broadcast(String json) {
@@ -336,6 +412,33 @@ public class MessageService {
                 session.sendText(json);
             }
         }
+    }
+
+    public void broadcastRoster() {
+        String rosterJson = buildRosterJson();
+        for (WebSocketSession session : sessions) {
+            if (session.isOpen()) {
+                session.sendText(rosterJson);
+            }
+        }
+    }
+
+    private void sendRosterTo(WebSocketSession session) {
+        session.sendText(buildRosterJson());
+    }
+
+    private String buildRosterJson() {
+        StringBuilder sb = new StringBuilder("{\"type\":\"ROSTER_UPDATED\",\"peers\":[");
+        int count = 0;
+        for (ClientProfile p : clientProfiles.values()) {
+            if (count > 0) {
+                sb.append(",");
+            }
+            sb.append(p.toJson());
+            count++;
+        }
+        sb.append("]}");
+        return sb.toString();
     }
 
     private void sendHistoryTo(WebSocketSession session) {
